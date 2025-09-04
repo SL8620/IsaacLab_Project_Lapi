@@ -17,11 +17,15 @@ from isaaclab.utils.math import sample_uniform
 
 from .lapi_env_cfg import LapiEnvCfg
 
-
+# 继承于DirectRLEnv类，是RL框架和环境交互的方式
+# 环境类
 class LapiEnv(DirectRLEnv):
-    cfg: LapiEnvCfg
 
+    cfg: LapiEnvCfg     # 并不是导入环境配置，而是声明这个cfg是LapiEnvCfg类
+
+    # 初始化函数，会调用_setup_scene构建场景并克隆
     def __init__(self, cfg: LapiEnvCfg, render_mode: str | None = None, **kwargs):
+        # 环境实例化，接受一个配置对象cfg，把cfg传给父类DirectRLEnv，完成环境初始化
         super().__init__(cfg, render_mode, **kwargs)
 
         self._cart_dof_idx, _ = self.robot.find_joints(self.cfg.cart_dof_name)
@@ -30,27 +34,44 @@ class LapiEnv(DirectRLEnv):
         self.joint_pos = self.robot.data.joint_pos
         self.joint_vel = self.robot.data.joint_vel
 
+    # 在此函数中构建场景，创建机器人并把机器人添加到场景里
     def _setup_scene(self):
+
+        # 创建机器人实例
         self.robot = Articulation(self.cfg.robot_cfg)
-        # add ground plane
+            # 首次出现在场景里，路径为/World/envs/env_0/Robot
+
+        # 创建地面
         spawn_ground_plane(prim_path="/World/ground", cfg=GroundPlaneCfg())
-        # clone and replicate
+
+        # 克隆环境
         self.scene.clone_environments(copy_from_source=False)
+            # 复制env_0到多个并行环境（env_1...）克隆后每个环节都是独立的，有自己的机器人副本，但所有环境初始状态相同
+            # True：会复制env_0当前状态到其他环境
+            # False：克隆时仅复制结构，不继承状态，状态由_reset_idx设置
+
         # we need to explicitly filter collisions for CPU simulation
         if self.device == "cpu":
             self.scene.filter_collisions(global_prim_paths=[])
-        # add articulation to scene
+
+        # 注册机器人到场景
         self.scene.articulations["robot"] = self.robot
+            # 把机器人存入场景里面的Articulation字典中，方便管理
+
         # add lights
         light_cfg = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.75, 0.75, 0.75))
         light_cfg.func("/World/Light", light_cfg)
 
+    # 在物理仿真步进之前缓存action指令，早于物理仿真调用，确保action指令不会被修改
     def _pre_physics_step(self, actions: torch.Tensor) -> None:
         self.actions = actions.clone()
 
+    # 把动作施加到机器人关节上
     def _apply_action(self) -> None:
         self.robot.set_joint_effort_target(self.actions * self.cfg.action_scale, joint_ids=self._cart_dof_idx)
+        # scale为缩放系数，将RL策略输出的【-1,1】映射到实际物理单位
 
+    # 从环境中提取出观测值，用于RL策略
     def _get_observations(self) -> dict:
         obs = torch.cat(
             (
@@ -59,11 +80,13 @@ class LapiEnv(DirectRLEnv):
                 self.joint_pos[:, self._cart_dof_idx[0]].unsqueeze(dim=1),
                 self.joint_vel[:, self._cart_dof_idx[0]].unsqueeze(dim=1),
             ),
-            dim=-1,
+            dim=-1, # 沿着最后一个维度（列方向）拼接
         )
+        # 这里的obs是一个形状为（num_envs,4）的张量
         observations = {"policy": obs}
         return observations
 
+    # 计算所有并行环境的当前奖励
     def _get_rewards(self) -> torch.Tensor:
         total_reward = compute_rewards(
             self.cfg.rew_scale_alive,
@@ -79,6 +102,7 @@ class LapiEnv(DirectRLEnv):
         )
         return total_reward
 
+    # 判断哪些环境需要终止
     def _get_dones(self) -> tuple[torch.Tensor, torch.Tensor]:
         self.joint_pos = self.robot.data.joint_pos
         self.joint_vel = self.robot.data.joint_vel
@@ -88,6 +112,7 @@ class LapiEnv(DirectRLEnv):
         out_of_bounds = out_of_bounds | torch.any(torch.abs(self.joint_pos[:, self._pole_dof_idx]) > math.pi / 2, dim=1)
         return out_of_bounds, time_out
 
+    # 重置制定环境的状态
     def _reset_idx(self, env_ids: Sequence[int] | None):
         if env_ids is None:
             env_ids = self.robot._ALL_INDICES

@@ -11,7 +11,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sim import SimulationCfg
 from isaaclab.utils import configclass
 
-
+# 配置类
 @configclass
 class LapiEnvCfg(DirectRLEnvCfg):
     # env
@@ -22,14 +22,21 @@ class LapiEnvCfg(DirectRLEnvCfg):
     observation_space = 4
     state_space = 0
 
+    # 通常这里要定义 sim robot scene
+
     # simulation
     sim: SimulationCfg = SimulationCfg(dt=1 / 120, render_interval=decimation)
+        # SimulationCfg可以配置时间步长dt精度/重力方向/物理仿真/渲染间隔
+        # 这里面dt是1/120s，渲染间隔2（即每隔一帧渲染一次）
 
     # robot(s)
     robot_cfg: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="/World/envs/env_.*/Robot")
-
+        # 配置机器人模型的路径
     # scene
     scene: InteractiveSceneCfg = InteractiveSceneCfg(num_envs=4096, env_spacing=4.0, replicate_physics=True)
+        # scene必须定义，没有默认值
+        # InteractiveSceneCfg描述同时训练的数量，以及场景间的间隔
+
 
     # custom parameters/scales
     # - controllable joint
